@@ -1,6 +1,9 @@
 # mq-resiliency-observability
 
-Non-MQI IBM MQ HA/DR observability: stdlib Python collectors and Grafana dashboards that map CLI-only MQ and cluster state (Native HA, RDQM, Pacemaker/DRBD) into Prometheus metrics, supplementing the stock mq_prometheus exporter. Packaged as signed .rpm and .deb.
+Non-MQI IBM MQ HA/DR observability: stdlib Python collectors and Grafana
+dashboards that map CLI-only MQ and cluster state (Native HA, RDQM,
+Pacemaker/DRBD) into Prometheus metrics, supplementing the stock mq_prometheus
+exporter. Packaged as signed .rpm and .deb.
 
 ## Table of Contents
 

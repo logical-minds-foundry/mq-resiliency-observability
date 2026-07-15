@@ -15,3 +15,21 @@ Thumbs.db
 .vergil/
 .superpowers/
 build/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+# Tool caches self-ignore, but be explicit for the validate/report artifacts.
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/
+junit.xml
+licenses.json
+pip-audit.json
