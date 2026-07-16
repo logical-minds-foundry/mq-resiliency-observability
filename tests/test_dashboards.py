@@ -18,12 +18,15 @@ from mqro.dashboards import DashboardProfile
 from mqro.dashboards.boards import primitives as prim
 from mqro.dashboards.boards.cluster import render_cluster_board
 from mqro.dashboards.boards.messaging import render_messaging_board
+from mqro.dashboards.boards.nativeha import render_nativeha_board
 from mqro.dashboards.boards.qm import render_qm_board
+from mqro.dashboards.boards.rdqm import render_rdqm_board
 from mqro.dashboards.render import dumps, render_all
 
 # A profile whose every field is a distinctive non-lab value, so the profile-driven assertions can
 # prove no lab literal leaked through (the QM names derive from short/svc_short the way the lab's
-# stacks registry derives them, never a competing source).
+# stacks registry derives them, never a competing source). site_a/b_members and drbd_resource are
+# likewise non-lab so the Native-HA / RDQM per-site + resource selectors prove de-hardcoded.
 PROFILE = DashboardProfile(
     slug="acme-arm",
     short="ACME",
@@ -35,6 +38,9 @@ PROFILE = DashboardProfile(
     title="ACME Infra",
     datasource_uid="ds-prom-xyz",
     logs_uid="ds-loki-xyz",
+    site_a_members="acme-a.*",
+    site_b_members="acme-b.*",
+    drbd_resource="acmedrbd",
 )
 
 # Every board render entry point, keyed for parametrization.
@@ -42,6 +48,8 @@ _RENDERERS = {
     "qm": render_qm_board,
     "messaging": render_messaging_board,
     "cluster": render_cluster_board,
+    "nativeha": render_nativeha_board,
+    "rdqm": render_rdqm_board,
 }
 
 # Lab literals that must never survive de-hardcoding — if any appears, a constant was left baked in.
@@ -124,9 +132,59 @@ def test_cluster_board_shape():
     assert "ACME Infra" in text
 
 
+def test_nativeha_board_shape():
+    board = render_nativeha_board(PROFILE)
+    assert board["uid"] == "mqro-acme-arm-nativeha"
+    assert board["tags"] == ["mqro", "cockpit", "acme-arm"]
+    text = dumps(board)
+    # the shared-family group selector is the profile's two sites; the owner query keys on the
+    # profile's QM resource (JSON escapes the surrounding quotes, so assert the bare token)
+    assert "acme_left|acme_right" in text
+    assert "acme_qm_res" in text
+    # the per-site instance matrices split on the profile's member regexes (not a host prefix)
+    assert "acme-a.*" in text
+    assert "acme-b.*" in text
+    # the log host patterns are the profile's, and the title spells out the profile title (the
+    # board dict carries the raw title; the JSON dump escapes the "·", so assert on the dict)
+    assert "acme-.*|vault-.*" in text
+    assert board["title"] == "Native HA Cluster · ACME Infra"
+    assert "ACME Infra" in text
+    # it queries the cluster_nha_* family (a real dependency on the contract)
+    assert "cluster_nha_role_code" in text
+
+
+def test_rdqm_board_shape():
+    board = render_rdqm_board(PROFILE)
+    assert board["uid"] == "mqro-acme-arm-rdqm"
+    assert board["tags"] == ["mqro", "cockpit", "acme-arm"]
+    text = dumps(board)
+    assert "acme_left|acme_right" in text
+    assert "acme_qm_res" in text
+    # the DRBD / Pacemaker resource names all derive from the one profile base (never `qmrdqm`);
+    # JSON escapes the surrounding quotes, so assert the bare distinctive tokens
+    assert "acmedrbd.dr" in text
+    assert "p_drbd_acmedrbd" in text
+    assert "p_drbd_dr_acmedrbd" in text
+    assert "p_ip_acmedrbd" in text
+    # the storage matrix spans both sites' members
+    assert "acme-a.*|acme-b.*" in text
+    # the DR-primary tile relabels the profile's groups to friendly site names
+    assert "acme_left" in text
+    assert "acme_right" in text
+    assert board["title"] == "RDQM Cluster · ACME Infra"
+    assert "ACME Infra" in text
+    assert "cluster_rdqm_role_code" in text
+
+
 def test_render_all_keys_by_uid():
     boards = render_all(PROFILE)
-    assert set(boards) == {"mqro-qm-acme", "mqro-messaging-acme-arm", "mqro-acme-arm-cluster"}
+    assert set(boards) == {
+        "mqro-qm-acme",
+        "mqro-messaging-acme-arm",
+        "mqro-acme-arm-cluster",
+        "mqro-acme-arm-nativeha",
+        "mqro-acme-arm-rdqm",
+    }
     for uid, board in boards.items():
         assert board["uid"] == uid
 
@@ -144,22 +202,37 @@ def test_profile_derivations():
     assert PROFILE.qm_board_uid == "mqro-qm-acme"
     assert PROFILE.messaging_board_uid == "mqro-messaging-acme-arm"
     assert PROFILE.cluster_board_uid == "mqro-acme-arm-cluster"
+    assert PROFILE.nativeha_board_uid == "mqro-acme-arm-nativeha"
+    assert PROFILE.rdqm_board_uid == "mqro-acme-arm-rdqm"
+    # explicit per-site member regexes are used verbatim; the both-sites selector is their union
+    assert PROFILE.site_a_member_selector == "acme-a.*"
+    assert PROFILE.site_b_member_selector == "acme-b.*"
+    assert PROFILE.all_members_selector == "acme-a.*|acme-b.*"
+    # the DRBD / Pacemaker resource ids all derive from the one base by the rdqmadm convention
+    assert PROFILE.drbd_dr_resource == "acmedrbd.dr"
+    assert PROFILE.pm_drbd_ha_resource == "p_drbd_acmedrbd"
+    assert PROFILE.pm_drbd_dr_resource == "p_drbd_dr_acmedrbd"
+    assert PROFILE.pm_ip_resource == "p_ip_acmedrbd"
 
 
 def test_profile_defaults_and_fallbacks():
-    # no log host patterns → the host selector opens up to .*; empty title → slug-derived fallback
+    # no log host patterns → the host selector opens up to .*; empty title → slug-derived fallback;
+    # empty site members → derived from the group name (`_`→`-` + `.*`).
     minimal = DashboardProfile(
         slug="min",
         short="M",
         svc_short="S",
-        site_a_group="a",
-        site_b_group="b",
+        site_a_group="left_a",
+        site_b_group="right_b",
         qm_resource="r",
     )
     assert minimal.host_selector == ".*"
     assert minimal.board_title == "min — cluster"
     assert minimal.datasource_uid == "prometheus"  # the default when not overridden
     assert minimal.logs_uid == "loki"
+    assert minimal.site_a_member_selector == "left-a.*"
+    assert minimal.site_b_member_selector == "right-b.*"
+    assert minimal.all_members_selector == "left-a.*|right-b.*"
 
 
 def test_profile_is_frozen():
@@ -190,3 +263,13 @@ def test_stat_text_mode_name_sets_legend():
     plain = prim.stat("t", "e", "ds", 0, 0)
     assert named["targets"][0]["legendFormat"] == "{{ip}}"
     assert "legendFormat" not in plain["targets"][0]
+
+
+def test_badge_is_background_coloured_and_sparkline_free():
+    # the badge is a titleless stat, background-coloured, no sparkline, with the value font capped
+    panel = prim.badge("e", "ds", 0, 0, mappings=[], w=4, h=6)
+    assert panel["type"] == "stat"
+    assert panel["title"] == ""
+    assert panel["options"]["colorMode"] == "background"
+    assert panel["options"]["graphMode"] == "none"
+    assert panel["options"]["text"]["valueSize"] == prim._COMPACT_VALUE_SIZE

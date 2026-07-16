@@ -267,7 +267,7 @@ from mqro.dashboards import DashboardProfile  # noqa: E402
 from mqro.dashboards.render import render_all  # noqa: E402
 
 # A representative profile — its literals are irrelevant to the invariant (metric NAMES are what is
-# checked, not label values), but a full render exercises every panel's query.
+# checked, not label values), but a full render exercises every panel's query across every board.
 _BOARD_PROFILE = DashboardProfile(
     slug="harness",
     short="HRN",
@@ -276,6 +276,9 @@ _BOARD_PROFILE = DashboardProfile(
     site_b_group="hrn_b",
     qm_resource="hrn_qm",
     log_host_patterns=("hrn-.*",),
+    site_a_members="hrn-a.*",
+    site_b_members="hrn-b.*",
+    drbd_resource="hrndrbd",
 )
 
 # Drop label values / Loki backtick bodies so they never contribute a false metric token.
@@ -349,7 +352,7 @@ def test_board_selectors_are_ours_or_external():
 
 
 def test_cluster_board_actually_exercises_the_contract():
-    """Guard the harness against passing vacuously: the cluster cockpit must query real cluster_*
+    """Guard the harness against passing vacuously: every cluster cockpit must query real cluster_*
     families (a broken render that emits none would otherwise trivially satisfy the subset test),
     while the stock-only boards query none of ours."""
     boards = render_all(_BOARD_PROFILE)
@@ -358,3 +361,22 @@ def test_cluster_board_actually_exercises_the_contract():
     # the stock-only boards carry no dependency on our contract
     assert board_cluster_metrics(boards[_BOARD_PROFILE.qm_board_uid]) == set()
     assert board_cluster_metrics(boards[_BOARD_PROFILE.messaging_board_uid]) == set()
+
+
+def test_cockpit_boards_exercise_their_own_families():
+    """Each cluster cockpit must actually exercise the metric family it owns — not just the shared
+    cluster_* families. Guards the board→collector subset test against a Native-HA or RDQM board
+    that renders (subset-clean) while querying none of its slice's own cluster_nha_* /
+    cluster_rdqm_* metrics (which would silently blank the whole board)."""
+    boards = render_all(_BOARD_PROFILE)
+    nativeha = board_cluster_metrics(boards[_BOARD_PROFILE.nativeha_board_uid])
+    rdqm = board_cluster_metrics(boards[_BOARD_PROFILE.rdqm_board_uid])
+    assert {m for m in nativeha if m.startswith("cluster_nha_")}, (
+        "the Native HA cockpit queries no cluster_nha_* family"
+    )
+    assert {m for m in rdqm if m.startswith("cluster_rdqm_")}, (
+        "the RDQM cockpit queries no cluster_rdqm_* family"
+    )
+    # and every family each queries is declared by that arm's collector slice specifically
+    assert nativeha <= (contract.metric_names(contract.NATIVEHA))
+    assert rdqm <= (contract.metric_names(contract.RDQM))
