@@ -38,6 +38,7 @@ CONTRACT_VERSION = "1"
 # once per emitting collector so each collector's slice stays independently checkable.
 NATIVEHA = "nativeha"
 PACEMAKER = "pacemaker"
+RDQM = "rdqm"
 
 
 class MetricKind(Enum):
@@ -304,6 +305,215 @@ EMITTED: tuple[MetricSpec, ...] = (
         semantics="Unix time of the last fresh write, one sample per source (crm/stonith/iscsi/"
         "drbd/daemons) that produced a reading this tick. A stalled source stops appearing, so its "
         "timestamp never advances and staleness alerting fires — never a republished value.",
+    ),
+    # The RDQM emitted contract. Order mirrors ``render_rdqm_state_prom`` so the two read side by
+    # side. Every entry here MUST be emitted by ``mqro.collectors.rdqm`` and carry exactly these
+    # label keys — enforced by the consistency test. Several families are SHARED with the sibling
+    # collectors (cluster_quorate, cluster_node_online, cluster_resource_owner, cluster_drbd_*, and
+    # the last-write timestamp) and are declared once more here for the RDQM slice; RDQM-only facets
+    # carry cluster_rdqm_* names.
+    MetricSpec(
+        name="cluster_quorate",
+        collector=RDQM,
+        labels=("node",),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when the RDQM HA group status is Normal, else 0 (RDQM has no vote count; HA "
+        "health is the quorum proxy the shared cockpit reads).",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_ha_status_ok",
+        collector=RDQM,
+        labels=("node",),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when this node's HA status is Normal, else 0.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_ha_status",
+        collector=RDQM,
+        labels=("node", "status"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); this node's HA status rides the `status` label "
+        "(Normal / Degraded / ...).",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_role",
+        collector=RDQM,
+        labels=("node", "member", "role"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); the local node's HA role rides the `role` label "
+        "(Primary / Secondary). Omitted when the role is unknown (never faked).",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_role_code",
+        collector=RDQM,
+        labels=("node", "member"),
+        kind=MetricKind.ENUM,
+        semantics="Numeric HA role code for the cockpit instance matrix: 2=Primary (runs the QM), "
+        "1=Secondary (healthy standby), 0=Unknown/other.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_qm_running",
+        collector=RDQM,
+        labels=("node", "member"),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when the queue manager status is Running on this node, else 0.",
+    ),
+    MetricSpec(
+        name="cluster_node_online",
+        collector=RDQM,
+        labels=("node", "member"),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when a member's HA status is Normal, else 0 (down/degraded/not-available).",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_member_status",
+        collector=RDQM,
+        labels=("node", "member", "status"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); each member's HA status rides the `status` label.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_floating_ip",
+        collector=RDQM,
+        labels=("node", "ip", "interface"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); the HA floating IP and its interface. Emitted "
+        "only for the node actually RUNNING the QM, so a DR pair never shows two active VIPs.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_location",
+        collector=RDQM,
+        labels=("node", "kind", "holder"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); an HA location — `kind` is current/preferred, "
+        "`holder` the resolved node name (`This node` resolves to the reporting node).",
+    ),
+    MetricSpec(
+        name="cluster_resource_owner",
+        collector=RDQM,
+        labels=("node", "resource", "holder"),
+        kind=MetricKind.STATE,
+        semantics="Emitted (value 1) only for the node RUNNING the queue manager. `resource` is "
+        "the QM name, `holder` the resolved current HA location.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_dr_role",
+        collector=RDQM,
+        labels=("node", "role"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); this node's DR role rides the `role` label "
+        "(Primary / Secondary). Omitted when there is no DR block.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_dr_role_code",
+        collector=RDQM,
+        labels=("node",),
+        kind=MetricKind.ENUM,
+        semantics="Numeric DR role code for the per-site chip: 2=Primary (LIVE site), 3=Secondary "
+        "(RECOVERY site), 0=Unknown/other.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_dr_status",
+        collector=RDQM,
+        labels=("node", "status"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); this node's DR status rides the `status` label. A "
+        "`See <primary>` pointer (printed by non-QM-running nodes) is skipped, never emitted.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_dr_status_ok",
+        collector=RDQM,
+        labels=("node",),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when this node's DR status is Normal, else 0. Emitted only for a real DR "
+        "status (the `See <primary>` pointer emits neither the status nor this flag).",
+    ),
+    MetricSpec(
+        name="cluster_drbd_role",
+        collector=RDQM,
+        labels=("node", "resource", "role"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); a DRBD resource's local role rides the `role` "
+        "label (Primary / Secondary / Unknown).",
+    ),
+    MetricSpec(
+        name="cluster_drbd_disk",
+        collector=RDQM,
+        labels=("node", "resource", "disk"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); a DRBD resource's local disk state rides the "
+        "`disk` label (UpToDate / Outdated / Diskless / ...).",
+    ),
+    MetricSpec(
+        name="cluster_drbd_conn",
+        collector=RDQM,
+        labels=("node", "resource", "conn"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); a DRBD resource's connection state rides the "
+        "`conn` label (Connected / StandAlone / ... — the integrity-light trigger).",
+    ),
+    MetricSpec(
+        name="cluster_drbd_resync_pct",
+        collector=RDQM,
+        labels=("node", "resource"),
+        kind=MetricKind.GAUGE,
+        semantics="DRBD resync completion percent; 100 when in sync (no resync in progress).",
+    ),
+    MetricSpec(
+        name="cluster_drbd_out_of_sync_bytes",
+        collector=RDQM,
+        labels=("node", "resource"),
+        kind=MetricKind.GAUGE,
+        semantics="DRBD out-of-sync byte lag (the RPO signal); 0 when fully replicated.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_pm_online",
+        collector=RDQM,
+        labels=("node", "member"),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when a member is Pacemaker-online (crm_mon node online), else 0. This is the "
+        "resource-manager view rdqmadm wraps — distinct from the HA `cluster_node_online`.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_pm_state",
+        collector=RDQM,
+        labels=("node", "member", "resource"),
+        kind=MetricKind.ENUM,
+        semantics="Numeric Pacemaker resource-state code per (member, resource) of the QM stack "
+        "(qmrdqm + DRBD clones + floating IP): 2=Started/Promoted, 1=Unpromoted, 0=Stopped/none.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_failcount",
+        collector=RDQM,
+        labels=("node", "member"),
+        kind=MetricKind.GAUGE,
+        semantics="The QM resource's Pacemaker fail-count on a member; 1000000 is INFINITY. "
+        "Exposes a banned/failed QM that rdqmstatus alone reports as HA-Normal.",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_qm_startable",
+        collector=RDQM,
+        labels=("node", "member"),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when the QM fail-count on a member is below INFINITY (Pacemaker can still "
+        "start it there), else 0 (banned).",
+    ),
+    MetricSpec(
+        name="cluster_rdqm_node_ready",
+        collector=RDQM,
+        labels=("node", "member"),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when a member is BOTH Pacemaker-online AND startable (a usable host); 0 "
+        "otherwise, so a node online-but-banned reads red, not a misleading green.",
+    ),
+    MetricSpec(
+        name="cluster_state_last_write_timestamp",
+        collector=RDQM,
+        labels=("node", "source"),
+        kind=MetricKind.TIMESTAMP,
+        semantics="Unix time of the last fresh write, one sample per source (rdqmstatus/drbd/crm) "
+        "that produced a reading this tick. A stalled source stops appearing, so its timestamp "
+        "never advances and staleness alerting fires — never a republished value.",
     ),
 )
 

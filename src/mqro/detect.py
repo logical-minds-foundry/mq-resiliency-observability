@@ -24,10 +24,12 @@ raises :class:`UnresolvableStackError` (a detectable signal) rather than guess a
 and emit wrong-shaped metrics — the §8 boundary principle applied to detection.
 
 The precedence/exclusion framework, the Native-HA probe, config-override, and fail-loud landed
-with the framework (T3). :func:`probe_pacemaker` is now wired (T13): a determinate ``True`` /
-``False``. Only :func:`probe_rdqm` remains a seam stubbed as ``None`` (wired up in T17) — but the
-precedence LOGIC that suppresses Pacemaker under RDQM is already complete: that logic *is* the
-framework.
+with the framework (T3). :func:`probe_pacemaker` is now wired (T13) and :func:`probe_rdqm` is now
+wired (T17): both are determinate ``True`` / ``False``. The two are mutually consistent by
+construction — both key off the same RDQM-tooling marker (``rdqmstatus`` present) — so an RDQM node
+reads ``rdqm=True`` and ``pacemaker=False`` and activates ``rdqmstate`` ALONE, never the generic
+Pacemaker collector. The precedence LOGIC that suppresses Pacemaker under RDQM was already
+complete: that logic *is* the framework.
 
 Stdlib-only, like every collector: detection runs on the MQ/cluster node itself.
 """
@@ -57,10 +59,11 @@ class Collector(StrEnum):
 class ProbeResults:
     """The outcome of each technology probe.
 
-    Three-valued on purpose: ``True``/``False`` is a real determination, while ``None`` is
-    the *not-yet-probed / not-yet-implemented* placeholder the remaining RDQM seam returns. A
-    ``None`` never lets the resolver CLAIM that technology — an unprobed stack falls through to
-    fail-loud rather than being silently assumed absent-and-fine.
+    Three-valued on purpose: ``True``/``False`` is a real determination, while ``None`` is the
+    *not-yet-probed* placeholder (every runtime probe is now wired, so :func:`gather_probes`
+    produces only ``True``/``False``; ``None`` remains a constructible default for callers that
+    build a partial result). A ``None`` never lets the resolver CLAIM that technology — an unprobed
+    stack falls through to fail-loud rather than being silently assumed absent-and-fine.
     """
 
     rdqm: bool | None = None
@@ -95,20 +98,22 @@ def probe_nativeha(*, timeout: int = 3) -> bool:
     return probe(_DSPMQ_NATIVEHA, timeout) is not None
 
 
-def probe_rdqm() -> bool | None:
-    """Seam STUB — returns the not-yet-implemented placeholder ``None`` (wired up in T17/#17).
+def probe_rdqm() -> bool:
+    """Real probe: ``True`` when this is an RDQM node — the ``rdqmstatus`` tooling is present.
 
-    The precedence LOGIC for RDQM (win + suppress Pacemaker) already lives in :func:`resolve`;
-    only this runtime detection of an RDQM node is deferred.
+    RDQM bundles its own Pacemaker/DRBD behind ``rdqmadm``, so the presence of ``rdqmstatus`` (not a
+    raw ``crm_mon`` answer, which an RDQM node ALSO gives) is the authoritative RDQM marker. This is
+    deliberately the SAME signal :func:`probe_pacemaker` uses to exclude RDQM (:func:`_rdqm_tooling_
+    present`), so the two probes cannot disagree: on an RDQM node ``rdqm=True`` and ``pacemaker=
+    False`` together, and :func:`resolve` activates ``rdqmstate`` alone.
     """
-    return None
+    return _rdqm_tooling_present()
 
 
 # The standalone-Pacemaker probe: `crm_mon` answering is the cluster signal. An RDQM node ALSO
 # answers crm_mon (RDQM bundles its own Pacemaker), so the probe must exclude RDQM — the presence
-# of the RDQM tooling (`rdqmstatus`) is that marker. This keeps the generic Pacemaker collector off
-# RDQM nodes independently of :func:`probe_rdqm` (still a seam), so no double-activation slips
-# through the window before #17 wires the RDQM probe.
+# of the RDQM tooling (`rdqmstatus`) is that marker. `probe_rdqm` keys off the SAME marker, so the
+# generic Pacemaker collector stays off RDQM nodes and the two probes can never disagree.
 _CRM_MON = ["crm_mon", "--one-shot", "--output-as=xml"]
 _RDQMSTATUS_BIN = "/opt/mqm/bin/rdqmstatus"
 
@@ -129,7 +134,7 @@ def probe_pacemaker(*, timeout: int = 3) -> bool:
 
 
 def gather_probes() -> ProbeResults:
-    """Run every technology probe once and collect the results (stubs included)."""
+    """Run every technology probe once and collect the results (all wired: True/False)."""
     return ProbeResults(
         rdqm=probe_rdqm(),
         nativeha=probe_nativeha(),

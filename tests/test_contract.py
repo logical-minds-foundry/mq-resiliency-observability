@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 
 from mqro import contract
-from mqro.collectors import cluster, nativeha
+from mqro.collectors import cluster, nativeha, rdqm
 
 # A rendered sample line is ``name{k="v",...} value``. Capture the name and the raw label block.
 _LINE = re.compile(r"^(?P<name>\w+)\{(?P<labels>[^}]*)\}\s")
@@ -125,10 +125,57 @@ def _render_all_cluster() -> str:
     )
 
 
+def _render_all_rdqm() -> str:
+    """Render one RDQM textfile exercising EVERY family in the RDQM contract.
+
+    A running Primary with a floating IP, current+preferred locations, and a real DR block covers
+    the HA/DR + owner families; a DRBD resource covers the ``cluster_drbd_*`` families; a crm node
+    covers the ``cluster_rdqm_pm_*`` / failcount / startable / node_ready families; three fresh
+    sources stamp the last-write family.
+    """
+    status = {
+        "node": "rdqm-a1",
+        "qm_status": "Running",
+        "ha_role": "Primary",
+        "ha_status": "Normal",
+        "ha_current_location": "This node",
+        "ha_preferred_location": "This node",
+        "floating_ip": "10.10.1.100",
+        "floating_ip_interface": "enp7s0",
+        "dr_role": "Primary",
+        "dr_status": "Normal",
+        "members": {"rdqm-a1": {"ha_status": "Normal"}},
+    }
+    drbd = {
+        "qmrdqm": {
+            "role": "Primary",
+            "disk": "UpToDate",
+            "conn": "Connected",
+            "resync_pct": 100.0,
+            "out_of_sync_bytes": 0,
+        }
+    }
+    crm = {
+        "nodes": {"rdqm-a1": {"online": True}},
+        "roles": {"qmrdqm": {"rdqm-a1": "Started"}},
+        "failcount": {"rdqm-a1": 0},
+    }
+    return rdqm.render_rdqm_state_prom(
+        node="rdqm-a1",
+        qm="QMRDQM",
+        status=status,
+        drbd=drbd,
+        crm=crm,
+        now=1781455000,
+        fresh_sources=("rdqmstatus", "drbd", "crm"),
+    )
+
+
 # collector id -> a body that emits its whole contract slice. T14: add other collectors here.
 _RENDERERS = {
     contract.NATIVEHA: _render_all_nativeha,
     contract.PACEMAKER: _render_all_cluster,
+    contract.RDQM: _render_all_rdqm,
 }
 
 
@@ -177,11 +224,14 @@ def test_metric_names_all_equals_union_of_collectors():
 def test_by_collector_partitions_the_contract():
     nha = contract.by_collector(contract.NATIVEHA)
     pcmk = contract.by_collector(contract.PACEMAKER)
-    # the two collectors' slices partition the whole contract: together they are EMITTED, and no
-    # spec belongs to both (shared families are declared once PER collector, distinct specs).
-    assert set(nha) | set(pcmk) == set(contract.EMITTED)
+    rdqm_slice = contract.by_collector(contract.RDQM)
+    # the collectors' slices partition the whole contract: together they are EMITTED, and no spec
+    # belongs to two (shared families are declared once PER collector, as distinct specs).
+    assert set(nha) | set(pcmk) | set(rdqm_slice) == set(contract.EMITTED)
     assert set(nha).isdisjoint(pcmk)
-    assert nha and pcmk  # both slices are non-empty
+    assert set(nha).isdisjoint(rdqm_slice)
+    assert set(pcmk).isdisjoint(rdqm_slice)
+    assert nha and pcmk and rdqm_slice  # every slice is non-empty
     assert contract.by_collector("no-such-collector") == ()
 
 
