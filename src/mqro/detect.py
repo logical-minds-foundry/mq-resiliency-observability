@@ -23,11 +23,11 @@ both-probes-answer case, which precedence handles. When nothing is recognized, d
 raises :class:`UnresolvableStackError` (a detectable signal) rather than guess a collector
 and emit wrong-shaped metrics — the §8 boundary principle applied to detection.
 
-Scope of THIS module (task T3): the precedence/exclusion framework, the real Native-HA
-probe, config-override, and fail-loud. The RDQM and standalone-Pacemaker *runtime probes*
-are seams stubbed here (they return the not-yet-implemented placeholder ``None``) and wired
-up in T12/T13 — but the precedence LOGIC that suppresses Pacemaker under RDQM is complete
-now, since that logic *is* the framework this task delivers.
+The precedence/exclusion framework, the Native-HA probe, config-override, and fail-loud landed
+with the framework (T3). :func:`probe_pacemaker` is now wired (T13): a determinate ``True`` /
+``False``. Only :func:`probe_rdqm` remains a seam stubbed as ``None`` (wired up in T17) — but the
+precedence LOGIC that suppresses Pacemaker under RDQM is already complete: that logic *is* the
+framework.
 
 Stdlib-only, like every collector: detection runs on the MQ/cluster node itself.
 """
@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from mqro.collectors.base import probe
@@ -57,8 +58,8 @@ class ProbeResults:
     """The outcome of each technology probe.
 
     Three-valued on purpose: ``True``/``False`` is a real determination, while ``None`` is
-    the *not-yet-probed / not-yet-implemented* placeholder the T12/T13 seams return. A ``None``
-    never lets the resolver CLAIM that technology — an unprobed stack falls through to
+    the *not-yet-probed / not-yet-implemented* placeholder the remaining RDQM seam returns. A
+    ``None`` never lets the resolver CLAIM that technology — an unprobed stack falls through to
     fail-loud rather than being silently assumed absent-and-fine.
     """
 
@@ -95,7 +96,7 @@ def probe_nativeha(*, timeout: int = 3) -> bool:
 
 
 def probe_rdqm() -> bool | None:
-    """Seam STUB — returns the not-yet-implemented placeholder ``None`` (wired up in T12).
+    """Seam STUB — returns the not-yet-implemented placeholder ``None`` (wired up in T17/#17).
 
     The precedence LOGIC for RDQM (win + suppress Pacemaker) already lives in :func:`resolve`;
     only this runtime detection of an RDQM node is deferred.
@@ -103,9 +104,28 @@ def probe_rdqm() -> bool | None:
     return None
 
 
-def probe_pacemaker() -> bool | None:
-    """Seam STUB — returns the not-yet-implemented placeholder ``None`` (wired up in T13)."""
-    return None
+# The standalone-Pacemaker probe: `crm_mon` answering is the cluster signal. An RDQM node ALSO
+# answers crm_mon (RDQM bundles its own Pacemaker), so the probe must exclude RDQM — the presence
+# of the RDQM tooling (`rdqmstatus`) is that marker. This keeps the generic Pacemaker collector off
+# RDQM nodes independently of :func:`probe_rdqm` (still a seam), so no double-activation slips
+# through the window before #17 wires the RDQM probe.
+_CRM_MON = ["crm_mon", "--one-shot", "--output-as=xml"]
+_RDQMSTATUS_BIN = "/opt/mqm/bin/rdqmstatus"
+
+
+def _rdqm_tooling_present() -> bool:
+    """``True`` when the RDQM tooling (``rdqmstatus``) is installed — the marker of an RDQM node."""
+    return Path(_RDQMSTATUS_BIN).exists()
+
+
+def probe_pacemaker(*, timeout: int = 3) -> bool:
+    """Real probe: ``True`` when this is a standalone Pacemaker node — ``crm_mon`` answers AND the
+    node is not RDQM. Returns a determinate ``False`` (never ``None``) on an RDQM node or where
+    crm_mon does not answer, so the resolver never mistakes it for an unprobed seam.
+    """
+    if _rdqm_tooling_present():
+        return False
+    return probe(_CRM_MON, timeout) is not None
 
 
 def gather_probes() -> ProbeResults:

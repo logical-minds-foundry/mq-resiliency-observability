@@ -33,12 +33,20 @@ def metric_line(name: str, labels: Mapping[str, object], value: object) -> str:
     return f"{name}{{{rendered}}} {value}"
 
 
-def probe(cmd: list[str], timeout: int) -> str | None:
-    """Run cmd bounded; return stdout on success, None on timeout/nonzero/OSError (-> STALE)."""
+def probe(cmd: list[str], timeout: int, *, ignore_rc: bool = False) -> str | None:
+    """Run cmd bounded; return stdout on success, None on timeout/nonzero/OSError (-> STALE).
+
+    ``ignore_rc=True`` returns stdout regardless of exit code — for tools like
+    ``systemctl is-active`` that report a valid state ("inactive") with a non-zero exit, where
+    non-zero means "down", not "the probe failed". A timeout/OSError still yields ``None`` (no
+    reading at all -> STALE), so a genuinely unreachable probe is never mistaken for a down reading.
+    """
     try:
         cp = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603
     except (subprocess.TimeoutExpired, OSError):
         return None
+    if ignore_rc:
+        return cp.stdout
     return cp.stdout if cp.returncode == 0 else None
 
 
