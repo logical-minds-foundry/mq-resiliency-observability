@@ -33,16 +33,28 @@ def metric_line(name: str, labels: Mapping[str, object], value: object) -> str:
     return f"{name}{{{rendered}}} {value}"
 
 
-def probe(cmd: list[str], timeout: int, *, ignore_rc: bool = False) -> str | None:
+def probe(
+    cmd: list[str], timeout: int, *, ignore_rc: bool = False, merge_stderr: bool = False
+) -> str | None:
     """Run cmd bounded; return stdout on success, None on timeout/nonzero/OSError (-> STALE).
 
     ``ignore_rc=True`` returns stdout regardless of exit code — for tools like
     ``systemctl is-active`` that report a valid state ("inactive") with a non-zero exit, where
     non-zero means "down", not "the probe failed". A timeout/OSError still yields ``None`` (no
     reading at all -> STALE), so a genuinely unreachable probe is never mistaken for a down reading.
+
+    ``merge_stderr=True`` folds the child's stderr into the returned stdout — needed for
+    ``rdqmstatus``, which writes its whole Node:/HA/DR report to STDERR when run non-interactively
+    (no TTY, as under the systemd timer); capturing stdout alone yields an empty string, so the
+    parse sees no blocks and every node falsely reads Unknown/red. It is OFF by default because
+    ``crm_mon`` writes XML to stdout and any stderr warning merged in would corrupt the parse
+    (``drbdsetup`` likewise writes to stdout).
     """
+    stderr = subprocess.STDOUT if merge_stderr else subprocess.PIPE
     try:
-        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)  # noqa: S603
+        cp = subprocess.run(  # noqa: S603
+            cmd, stdout=subprocess.PIPE, stderr=stderr, text=True, timeout=timeout, check=False
+        )
     except (subprocess.TimeoutExpired, OSError):
         return None
     if ignore_rc:

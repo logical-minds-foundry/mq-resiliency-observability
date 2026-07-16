@@ -86,6 +86,35 @@ def test_probe_ignore_rc_still_returns_none_on_timeout(monkeypatch):
     assert base.probe(["systemctl"], timeout=2, ignore_rc=True) is None
 
 
+def test_probe_merge_stderr_folds_stderr_into_stdout(monkeypatch):
+    # rdqmstatus writes its whole report to STDERR when run non-interactively (no TTY, as under
+    # the systemd timer), so its probe MUST merge stderr into stdout or the parse sees an empty
+    # string; crm_mon/drbdsetup write clean stdout, so the default keeps the streams separate.
+    seen: dict[str, object] = {}
+
+    def fake_run(cmd, **kwargs):
+        seen.clear()
+        seen.update(kwargs)
+        return subprocess.CompletedProcess(cmd, 0, "Node:  rdqm-a1\n", None)
+
+    monkeypatch.setattr(base.subprocess, "run", fake_run)
+    out = base.probe(["/opt/mqm/bin/rdqmstatus"], timeout=3, merge_stderr=True)
+    assert out == "Node:  rdqm-a1\n"
+    assert seen.get("stderr") is subprocess.STDOUT  # rdqmstatus: stderr folded into stdout
+    base.probe(["crm_mon"], timeout=3)  # default: keep streams separate (clean XML)
+    assert seen.get("stderr") is subprocess.PIPE
+
+
+def test_probe_merge_stderr_still_none_on_timeout(monkeypatch):
+    # merge_stderr changes only where stderr goes, not the STALE contract: a timeout still -> None.
+    monkeypatch.setattr(
+        base.subprocess,
+        "run",
+        lambda c, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(c, k["timeout"])),
+    )
+    assert base.probe(["rdqmstatus"], timeout=3, merge_stderr=True) is None
+
+
 def test_write_textfile_is_atomic_and_cleans_up_tmp(tmp_path):
     out = tmp_path / "state.prom"
     base.write_textfile(out, "hello\n")
