@@ -251,3 +251,110 @@ def test_specs_are_well_formed():
         assert spec.labels[0] == "node"
         assert spec.semantics
         assert isinstance(spec.kind, contract.MetricKind)
+
+
+# ── The board side (T14): every cluster_* a panel queries is one a collector emits ────────────
+#
+# The second half of the consistency invariant (see the module docstring's extension point #2):
+# a rendered board's PromQL must never query a `cluster_*` family the collectors do not emit —
+# that would silently blank a panel. Stock series (`ibmmq_*` / `node_*`) and the external app-SLA
+# signal (`app_roundtrip_*`) are documented-as-external: they come from the stock exporter / the
+# operator's own probes, are NOT in this repo's contract, and are explicitly allowed. The harness
+# distinguishes the two: OUR families (cluster_*) must be emitted; EXTERNAL families are allowlisted
+# by prefix, and any series selector matching neither fails loud (a typo'd or unaccounted family).
+
+from mqro.dashboards import DashboardProfile  # noqa: E402
+from mqro.dashboards.render import render_all  # noqa: E402
+
+# A representative profile — its literals are irrelevant to the invariant (metric NAMES are what is
+# checked, not label values), but a full render exercises every panel's query.
+_BOARD_PROFILE = DashboardProfile(
+    slug="harness",
+    short="HRN",
+    svc_short="SVC",
+    site_a_group="hrn_a",
+    site_b_group="hrn_b",
+    qm_resource="hrn_qm",
+    log_host_patterns=("hrn-.*",),
+)
+
+# Drop label values / Loki backtick bodies so they never contribute a false metric token.
+_STRING = re.compile(r'"[^"]*"|`[^`]*`')
+# A cluster_* metric token (our families — with or without a label matcher).
+_CLUSTER_METRIC = re.compile(r"\bcluster_[a-zA-Z0-9_]+")
+# A series selector: an identifier immediately followed by a `{` label matcher.
+_SELECTOR = re.compile(r"([a-zA-Z_:][a-zA-Z0-9_:]*)\s*\{")
+
+# Series selectors whose family is allowed but external to this repo's contract.
+_EXTERNAL_PREFIXES = ("ibmmq_", "node_", "app_roundtrip_")
+_EXTERNAL_EXACT = frozenset({"up"})
+
+
+def _panel_prom_exprs(board: dict) -> list[str]:
+    """Every Prometheus PromQL expr a board's panels query, plus its annotation exprs. Loki log
+    panels are skipped (their expr is a log selector, not PromQL)."""
+    exprs: list[str] = []
+    for panel in board.get("panels", []):
+        if panel.get("type") == "logs":
+            continue
+        for target in panel.get("targets", []):
+            ds = target.get("datasource") or {}
+            if ds.get("type", "prometheus") == "prometheus":
+                exprs.append(target["expr"])
+    for ann in board.get("annotations", {}).get("list", []):
+        if "expr" in ann:
+            exprs.append(ann["expr"])
+    return exprs
+
+
+def board_cluster_metrics(board: dict) -> set[str]:
+    """Every ``cluster_*`` (our-family) metric name a board's panels query."""
+    found: set[str] = set()
+    for expr in _panel_prom_exprs(board):
+        found.update(_CLUSTER_METRIC.findall(_STRING.sub("", expr)))
+    return found
+
+
+def board_selector_names(board: dict) -> set[str]:
+    """Every series-selector metric name (an identifier with a `{` matcher) a board queries."""
+    found: set[str] = set()
+    for expr in _panel_prom_exprs(board):
+        found.update(_SELECTOR.findall(_STRING.sub("", expr)))
+    return found
+
+
+def _is_external(name: str) -> bool:
+    return name in _EXTERNAL_EXACT or name.startswith(_EXTERNAL_PREFIXES)
+
+
+def test_board_cluster_metrics_are_all_emitted():
+    """Every ``cluster_*`` family a shipped board queries is one the contract declares a collector
+    emits — the board→collector half of the consistency invariant."""
+    declared = contract.metric_names()
+    for uid, board in render_all(_BOARD_PROFILE).items():
+        used = board_cluster_metrics(board)
+        assert used <= declared, f"{uid}: queries un-emitted cluster metrics {used - declared}"
+
+
+def test_board_selectors_are_ours_or_external():
+    """Every series selector a board queries is either an OUR (cluster_*) family that must be
+    emitted, or a documented-external stock/app family — never an unaccounted third thing."""
+    declared = contract.metric_names()
+    for uid, board in render_all(_BOARD_PROFILE).items():
+        for name in board_selector_names(board):
+            if name.startswith("cluster_"):
+                assert name in declared, f"{uid}: cluster selector {name} is not emitted"
+            else:
+                assert _is_external(name), f"{uid}: selector {name} is neither ours nor external"
+
+
+def test_cluster_board_actually_exercises_the_contract():
+    """Guard the harness against passing vacuously: the cluster cockpit must query real cluster_*
+    families (a broken render that emits none would otherwise trivially satisfy the subset test),
+    while the stock-only boards query none of ours."""
+    boards = render_all(_BOARD_PROFILE)
+    cluster_board = boards[_BOARD_PROFILE.cluster_board_uid]
+    assert board_cluster_metrics(cluster_board), "the cluster cockpit queries no cluster_* metrics"
+    # the stock-only boards carry no dependency on our contract
+    assert board_cluster_metrics(boards[_BOARD_PROFILE.qm_board_uid]) == set()
+    assert board_cluster_metrics(boards[_BOARD_PROFILE.messaging_board_uid]) == set()
