@@ -32,8 +32,12 @@ from enum import Enum
 CONTRACT_VERSION = "1"
 
 # Collector identifiers. One per emitting module; the consistency test iterates per collector so
-# each collector's slice of the contract is checked against that collector's own output.
+# each collector's slice of the contract is checked against that collector's own output. Several
+# families (cluster_quorate, cluster_node_online, cluster_resource_owner, the last-write timestamp)
+# are emitted by MORE THAN ONE collector with identical labels/semantics — a shared family, declared
+# once per emitting collector so each collector's slice stays independently checkable.
 NATIVEHA = "nativeha"
+PACEMAKER = "pacemaker"
 
 
 class MetricKind(Enum):
@@ -188,6 +192,118 @@ EMITTED: tuple[MetricSpec, ...] = (
         semantics="Unix time of the last fresh write, one sample per source that produced a "
         "reading this tick. A stalled source stops appearing, so its timestamp never advances "
         "and staleness alerting fires — never a republished last-known value.",
+    ),
+    # The Pacemaker/Corosync/DRBD emitted contract. Order mirrors ``render_cluster_state_prom`` so
+    # the two read side by side. Every entry here MUST be emitted by ``mqro.collectors.cluster`` and
+    # carry exactly these label keys — enforced by the consistency test.
+    MetricSpec(
+        name="cluster_quorate",
+        collector=PACEMAKER,
+        labels=("node",),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when the Pacemaker cluster has quorum (crm_mon current_dc with_quorum), "
+        "else 0.",
+    ),
+    MetricSpec(
+        name="cluster_node_online",
+        collector=PACEMAKER,
+        labels=("node", "member"),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when a cluster member is online (crm_mon node online), else 0.",
+    ),
+    MetricSpec(
+        name="cluster_node_unclean",
+        collector=PACEMAKER,
+        labels=("node", "member"),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when a member is UNCLEAN (crm_mon node unclean — pending fence), else 0.",
+    ),
+    MetricSpec(
+        name="cluster_resource_started",
+        collector=PACEMAKER,
+        labels=("node", "resource"),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when a resource-group member is Started, else 0. `resource` is the crm_mon "
+        "resource id (e.g. the queue manager's Pacemaker resource); top-level STONITH resources "
+        "are excluded.",
+    ),
+    MetricSpec(
+        name="cluster_resource_owner",
+        collector=PACEMAKER,
+        labels=("node", "resource", "holder"),
+        kind=MetricKind.STATE,
+        semantics="Emitted (value 1) only for a placed resource; `resource` is the crm_mon "
+        "resource id and `holder` the node running it. An unplaced resource emits no owner line.",
+    ),
+    MetricSpec(
+        name="cluster_fence_count",
+        collector=PACEMAKER,
+        labels=("node", "member"),
+        kind=MetricKind.GAUGE,
+        semantics="Count of fence actions in stonith history for a member; 0 is the clean baseline "
+        "emitted for every known member (so a clean cluster is green, not grey no-data).",
+    ),
+    MetricSpec(
+        name="cluster_iscsi_sessions",
+        collector=PACEMAKER,
+        labels=("node",),
+        kind=MetricKind.GAUGE,
+        semantics="Count of active iSCSI sessions on this node (iscsiadm -m session).",
+    ),
+    MetricSpec(
+        name="cluster_daemon_up",
+        collector=PACEMAKER,
+        labels=("node", "unit"),
+        kind=MetricKind.BOOLEAN,
+        semantics="1 when a cluster daemon unit is systemctl-active (corosync/pacemaker/drbd), "
+        "else 0. A unit absent on this node reads 0.",
+    ),
+    MetricSpec(
+        name="cluster_drbd_role",
+        collector=PACEMAKER,
+        labels=("node", "resource", "role"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); a DRBD resource's local role rides the `role` "
+        "label (Primary / Secondary / Unknown).",
+    ),
+    MetricSpec(
+        name="cluster_drbd_disk",
+        collector=PACEMAKER,
+        labels=("node", "resource", "disk"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); a DRBD resource's local disk state rides the "
+        "`disk` label (UpToDate / Outdated / Diskless / ...).",
+    ),
+    MetricSpec(
+        name="cluster_drbd_conn",
+        collector=PACEMAKER,
+        labels=("node", "resource", "conn"),
+        kind=MetricKind.STATE,
+        semantics="Info series (value always 1); a DRBD resource's connection state rides the "
+        "`conn` label (Connected / StandAlone / ... — the integrity-light trigger).",
+    ),
+    MetricSpec(
+        name="cluster_drbd_resync_pct",
+        collector=PACEMAKER,
+        labels=("node", "resource"),
+        kind=MetricKind.GAUGE,
+        semantics="DRBD resync completion percent; 100 when in sync (no resync in progress).",
+    ),
+    MetricSpec(
+        name="cluster_drbd_out_of_sync_bytes",
+        collector=PACEMAKER,
+        labels=("node", "resource"),
+        kind=MetricKind.GAUGE,
+        semantics="DRBD out-of-sync byte lag (the RPO signal); 0 when fully replicated.",
+    ),
+    MetricSpec(
+        name="cluster_state_last_write_timestamp",
+        collector=PACEMAKER,
+        labels=("node", "source"),
+        kind=MetricKind.TIMESTAMP,
+        semantics="Unix time of the last fresh write, one sample per source (crm/stonith/iscsi/"
+        "drbd/daemons) that produced a reading this tick. A stalled source stops appearing, so its "
+        "timestamp never advances and staleness alerting fires — never a republished value.",
     ),
 )
 

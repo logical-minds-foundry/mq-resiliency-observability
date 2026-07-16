@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 
 from mqro import contract
-from mqro.collectors import nativeha
+from mqro.collectors import cluster, nativeha
 
 # A rendered sample line is ``name{k="v",...} value``. Capture the name and the raw label block.
 _LINE = re.compile(r"^(?P<name>\w+)\{(?P<labels>[^}]*)\}\s")
@@ -88,8 +88,48 @@ def _render_all_nativeha() -> str:
     )
 
 
+def _render_all_cluster() -> str:
+    """Render one Pacemaker/DRBD textfile exercising EVERY family in the Pacemaker contract.
+
+    An online member plus an offline+unclean member cover the node families and the fence baseline;
+    a Started+placed resource covers ``cluster_resource_started`` and ``cluster_resource_owner``; a
+    non-zero iSCSI session count, three daemon units, and a DRBD resource carrying resync/RPO
+    (non-None) cover the remaining families; five fresh sources stamp the last-write family.
+    """
+    crm = {
+        "quorate": True,
+        "nodes": {
+            "pcmk-a1": {"online": True, "standby": False, "unclean": False},
+            "pcmk-a2": {"online": False, "standby": False, "unclean": True},
+        },
+        "resources": {"mq_qm": {"state": "Started", "node": "pcmk-a1"}},
+    }
+    drbd = {
+        "mqlun": {
+            "role": "Primary",
+            "disk": "UpToDate",
+            "conn": "Connected",
+            "resync_pct": 42.0,
+            "out_of_sync_bytes": 2202010,
+        }
+    }
+    return cluster.render_cluster_state_prom(
+        node="pcmk-a1",
+        crm=crm,
+        stonith={"pcmk-a2": 3},
+        iscsi=2,
+        daemons={"corosync": True, "pacemaker": True, "drbd": True},
+        drbd=drbd,
+        now=1781455000,
+        fresh_sources=("crm", "stonith", "iscsi", "drbd", "daemons"),
+    )
+
+
 # collector id -> a body that emits its whole contract slice. T14: add other collectors here.
-_RENDERERS = {contract.NATIVEHA: _render_all_nativeha}
+_RENDERERS = {
+    contract.NATIVEHA: _render_all_nativeha,
+    contract.PACEMAKER: _render_all_cluster,
+}
 
 
 def test_contract_matches_collector_emission():
@@ -136,7 +176,12 @@ def test_metric_names_all_equals_union_of_collectors():
 
 def test_by_collector_partitions_the_contract():
     nha = contract.by_collector(contract.NATIVEHA)
-    assert set(nha) == set(contract.EMITTED)  # every current spec is Native HA
+    pcmk = contract.by_collector(contract.PACEMAKER)
+    # the two collectors' slices partition the whole contract: together they are EMITTED, and no
+    # spec belongs to both (shared families are declared once PER collector, distinct specs).
+    assert set(nha) | set(pcmk) == set(contract.EMITTED)
+    assert set(nha).isdisjoint(pcmk)
+    assert nha and pcmk  # both slices are non-empty
     assert contract.by_collector("no-such-collector") == ()
 
 

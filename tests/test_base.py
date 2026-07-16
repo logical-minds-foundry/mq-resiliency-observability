@@ -63,6 +63,29 @@ def test_probe_returns_none_on_oserror(monkeypatch):
     assert base.probe(["dspmq"], timeout=3) is None
 
 
+def test_probe_ignore_rc_returns_stdout_on_nonzero(monkeypatch):
+    # `systemctl is-active` exits non-zero for an inactive unit, but its stdout is the real state;
+    # ignore_rc keeps that reading (down != probe-failed). Default (ignore_rc=False) still -> None.
+    monkeypatch.setattr(
+        base.subprocess,
+        "run",
+        lambda c, **k: subprocess.CompletedProcess(c, 3, "inactive\n", ""),
+    )
+    assert base.probe(["systemctl"], timeout=2) is None
+    assert base.probe(["systemctl"], timeout=2, ignore_rc=True) == "inactive\n"
+
+
+def test_probe_ignore_rc_still_returns_none_on_timeout(monkeypatch):
+    # ignore_rc suppresses the exit code, NOT a timeout: an unreachable probe is still STALE, never
+    # mistaken for a down reading.
+    monkeypatch.setattr(
+        base.subprocess,
+        "run",
+        lambda c, **k: (_ for _ in ()).throw(subprocess.TimeoutExpired(c, k["timeout"])),
+    )
+    assert base.probe(["systemctl"], timeout=2, ignore_rc=True) is None
+
+
 def test_write_textfile_is_atomic_and_cleans_up_tmp(tmp_path):
     out = tmp_path / "state.prom"
     base.write_textfile(out, "hello\n")

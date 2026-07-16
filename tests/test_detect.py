@@ -83,15 +83,24 @@ def test_detect_explicit_empty_override_activates_nothing(monkeypatch):
 
 
 def test_detect_nativeha_environment_activates_nativehastate(monkeypatch):
-    # a Native-HA node: dspmq -o nativeha succeeds; rdqm/pacemaker seams return their None
-    # placeholder -> detection resolves to nativehastate.
+    # a Native-HA node: dspmq -o nativeha succeeds; pacemaker probe False, rdqm seam None
+    # -> detection resolves to nativehastate (Native HA outranks standalone Pacemaker anyway).
     monkeypatch.setattr(detect, "probe_nativeha", lambda: True)
+    monkeypatch.setattr(detect, "probe_pacemaker", lambda: False)
     assert detect.detect() == frozenset({Collector.NATIVEHA})
 
 
-def test_detect_unknown_stack_fails_loud(monkeypatch):
-    # nothing detected (nativeha probe fails, rdqm/pcmk stubbed) -> refuse to guess.
+def test_detect_standalone_pacemaker_environment_activates_clusterstate(monkeypatch):
+    # a standalone Pacemaker node: not Native HA, crm_mon answers and it's not RDQM -> clusterstate.
     monkeypatch.setattr(detect, "probe_nativeha", lambda: False)
+    monkeypatch.setattr(detect, "probe_pacemaker", lambda: True)
+    assert detect.detect() == frozenset({Collector.PACEMAKER})
+
+
+def test_detect_unknown_stack_fails_loud(monkeypatch):
+    # nothing detected (nativeha fails, pacemaker False, rdqm stubbed) -> refuse to guess.
+    monkeypatch.setattr(detect, "probe_nativeha", lambda: False)
+    monkeypatch.setattr(detect, "probe_pacemaker", lambda: False)
     with pytest.raises(UnresolvableStackError):
         detect.detect()
 
@@ -117,12 +126,42 @@ def test_probe_rdqm_is_stubbed_until_t12():
     assert detect.probe_rdqm() is None
 
 
-def test_probe_pacemaker_is_stubbed_until_t13():
-    assert detect.probe_pacemaker() is None
+def test_probe_pacemaker_true_when_crm_mon_answers_and_not_rdqm(monkeypatch):
+    # standalone Pacemaker: crm_mon answers (probe returns stdout) and the RDQM tooling is absent.
+    monkeypatch.setattr(detect, "_rdqm_tooling_present", lambda: False)
+    monkeypatch.setattr(detect, "probe", lambda cmd, timeout: "<pacemaker-result/>\n")
+    assert detect.probe_pacemaker() is True
+
+
+def test_probe_pacemaker_false_when_crm_mon_does_not_answer(monkeypatch):
+    # crm_mon absent/failed (probe returns None) and not RDQM -> not a Pacemaker node.
+    monkeypatch.setattr(detect, "_rdqm_tooling_present", lambda: False)
+    monkeypatch.setattr(detect, "probe", lambda cmd, timeout: None)
+    assert detect.probe_pacemaker() is False
+
+
+def test_probe_pacemaker_false_on_rdqm_node_without_running_crm_mon(monkeypatch):
+    # an RDQM node ALSO answers crm_mon, but its bundled Pacemaker must NOT activate the generic
+    # collector: the RDQM-tooling marker short-circuits to False BEFORE crm_mon is even probed.
+    monkeypatch.setattr(detect, "_rdqm_tooling_present", lambda: True)
+    monkeypatch.setattr(
+        detect, "probe", lambda cmd, timeout: (_ for _ in ()).throw(AssertionError("no crm probe"))
+    )
+    assert detect.probe_pacemaker() is False
+
+
+def test_rdqm_tooling_present_reads_the_binary_path(monkeypatch, tmp_path):
+    # present -> the rdqmstatus binary exists on disk; absent -> it does not.
+    binary = tmp_path / "rdqmstatus"
+    binary.write_text("")
+    monkeypatch.setattr(detect, "_RDQMSTATUS_BIN", str(binary))
+    assert detect._rdqm_tooling_present() is True
+    monkeypatch.setattr(detect, "_RDQMSTATUS_BIN", str(tmp_path / "nope"))
+    assert detect._rdqm_tooling_present() is False
 
 
 def test_gather_probes_runs_every_probe(monkeypatch):
     monkeypatch.setattr(detect, "probe_nativeha", lambda: True)
     monkeypatch.setattr(detect, "probe_rdqm", lambda: None)
-    monkeypatch.setattr(detect, "probe_pacemaker", lambda: None)
-    assert detect.gather_probes() == ProbeResults(rdqm=None, nativeha=True, pacemaker=None)
+    monkeypatch.setattr(detect, "probe_pacemaker", lambda: False)
+    assert detect.gather_probes() == ProbeResults(rdqm=None, nativeha=True, pacemaker=False)
