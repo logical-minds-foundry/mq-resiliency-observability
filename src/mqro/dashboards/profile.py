@@ -42,6 +42,17 @@ class DashboardProfile:
         title: Human board title (the spelled-out banner). Defaults to a slug-derived title.
         datasource_uid: The Prometheus datasource UID (was the hardcoded ``"prometheus"``).
         logs_uid: The Loki datasource UID (was the hardcoded ``"loki"``).
+        site_a_members: Member/instance-name regex selecting site A's instances (e.g.
+            ``"nha-rhel-a.*"``). The Native-HA / RDQM per-site instance matrices split on the
+            member NAME (a member belongs to a site regardless of which node reported it), not on
+            the reporter's ``groups`` label. Empty derives it from ``site_a_group`` (``_``→``-``).
+            Was the lab's baked host/instance ``prefix``.
+        site_b_members: The site B member/instance-name regex; empty derives from ``site_b_group``.
+        drbd_resource: The RDQM DRBD / Pacemaker base resource name (e.g. ``"qmrdqm"``) the RDQM
+            board's DRBD and ``cluster_rdqm_pm_state`` queries key on. The DR resource
+            (``<base>.dr``) and the Pacemaker clone/IP ids (``p_drbd_<base>`` / ``p_drbd_dr_<base>``
+            / ``p_ip_<base>``) derive from it by the rdqmadm/Pacemaker naming convention — one
+            input, not five baked literals. RDQM-only; unused by the other arms.
     """
 
     slug: str
@@ -54,6 +65,9 @@ class DashboardProfile:
     title: str = ""
     datasource_uid: str = "prometheus"
     logs_uid: str = "loki"
+    site_a_members: str = ""
+    site_b_members: str = ""
+    drbd_resource: str = ""
 
     @property
     def app_qm(self) -> str:
@@ -99,3 +113,51 @@ class DashboardProfile:
     def cluster_board_uid(self) -> str:
         """The pinned cluster-cockpit board uid: ``mqro-<slug>-cluster``."""
         return f"mqro-{self.slug}-cluster"
+
+    @property
+    def nativeha_board_uid(self) -> str:
+        """The pinned Native-HA cockpit board uid: ``mqro-<slug>-nativeha``."""
+        return f"mqro-{self.slug}-nativeha"
+
+    @property
+    def rdqm_board_uid(self) -> str:
+        """The pinned RDQM cockpit board uid: ``mqro-<slug>-rdqm``."""
+        return f"mqro-{self.slug}-rdqm"
+
+    @property
+    def site_a_member_selector(self) -> str:
+        """Site A's member/instance-name regex — the explicit ``site_a_members`` when set, else
+        derived from ``site_a_group`` by the lab convention (``_``→``-`` + ``.*``)."""
+        return self.site_a_members or f"{self.site_a_group.replace('_', '-')}.*"
+
+    @property
+    def site_b_member_selector(self) -> str:
+        """Site B's member/instance-name regex — the explicit ``site_b_members`` when set, else
+        derived from ``site_b_group`` by the lab convention (``_``→``-`` + ``.*``)."""
+        return self.site_b_members or f"{self.site_b_group.replace('_', '-')}.*"
+
+    @property
+    def all_members_selector(self) -> str:
+        """The both-sites member/node regex — the alternation of the two site selectors. Scopes
+        the RDQM storage matrix (which spans every node running the HA DRBD resource)."""
+        return f"{self.site_a_member_selector}|{self.site_b_member_selector}"
+
+    @property
+    def drbd_dr_resource(self) -> str:
+        """The RDQM cross-site DR DRBD resource — ``<drbd_resource>.dr`` (rdqmdr convention)."""
+        return f"{self.drbd_resource}.dr"
+
+    @property
+    def pm_drbd_ha_resource(self) -> str:
+        """The Pacemaker clone id for the HA DRBD resource — ``p_drbd_<drbd_resource>``."""
+        return f"p_drbd_{self.drbd_resource}"
+
+    @property
+    def pm_drbd_dr_resource(self) -> str:
+        """The Pacemaker clone id for the DR DRBD resource — ``p_drbd_dr_<drbd_resource>``."""
+        return f"p_drbd_dr_{self.drbd_resource}"
+
+    @property
+    def pm_ip_resource(self) -> str:
+        """The Pacemaker floating-IP resource id — ``p_ip_<drbd_resource>``."""
+        return f"p_ip_{self.drbd_resource}"
