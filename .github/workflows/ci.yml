@@ -65,3 +65,6 @@ jobs:
       run-release: ${{ inputs.run-release != 'false' }}
       container-tag: '3.14'
       container-suffix: python
+
+  docs:
+    uses: vergil-project/vergil-actions/.github/workflows/ci-docs.yml@v2.1
