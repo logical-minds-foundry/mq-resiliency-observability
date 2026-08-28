@@ -1,35 +1,46 @@
-# Editors
+# >>> vergil-managed: base + python (managed by vrg-gitignore-sync; do not edit) >>>
 *.swp
 *.swo
 *~
+*.bak
 .idea/
 .vscode/
-
-# OS
 .DS_Store
 Thumbs.db
-
-# Vergil
-.venv-host/
+.env
+.env.*
+*.log
+.venv/
 .worktrees/
 .vergil/
 .superpowers/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
 build/
-
-# Python
+dist/
+coverage.xml
+junit.xml
+licenses.json
+docs/site/site/
+node_modules/
 __pycache__/
-*.py[cod]
-.venv/
-*.egg-info/
-# Tool caches self-ignore, but be explicit for the validate/report artifacts.
+*.pyc
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+*.egg-info/
 .coverage
+pip-audit.json
+quality-ruff.json
+quality-mypy.xml
+# <<< vergil-managed <<<
+
+# Vergil
+.venv-host/
+
+# Python
+*.py[cod]
+# Tool caches self-ignore, but be explicit for the validate/report artifacts.
 .coverage.*
-coverage.xml
 coverage.json
 htmlcov/
-junit.xml
-licenses.json
-pip-audit.json
