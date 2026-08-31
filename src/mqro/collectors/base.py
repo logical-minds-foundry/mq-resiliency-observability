@@ -55,7 +55,7 @@ def probe(
         cp = subprocess.run(  # noqa: S603
             cmd, stdout=subprocess.PIPE, stderr=stderr, text=True, timeout=timeout, check=False
         )
-    except (subprocess.TimeoutExpired, OSError):
+    except subprocess.TimeoutExpired, OSError:
         return None
     if ignore_rc:
         return cp.stdout

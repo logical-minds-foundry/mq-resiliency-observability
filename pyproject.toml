@@ -1,7 +1,7 @@
 [project]
 name = "mqro"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 # Runtime is stdlib-only by design: the collectors deploy verbatim onto MQ nodes
@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 dependencies = []
 
 [dependency-groups]
-dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
+dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses", "pytest-xdist"]
 
 [build-system]
 requires = ["hatchling"]
@@ -19,7 +19,7 @@ build-backend = "hatchling.build"
 packages = ["src/mqro"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 line-length = 100
 
 [tool.ruff.lint]
@@ -33,7 +33,7 @@ select = ["E", "F", "W", "I", "N", "UP", "S", "B", "A", "C4", "SIM", "TCH", "ARG
 "tests/**" = ["S101", "S603", "S607", "ARG", "E402"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.14"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
