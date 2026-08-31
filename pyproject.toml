@@ -9,7 +9,7 @@ license-files = ["LICENSE"]
 dependencies = []
 
 [dependency-groups]
-dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
+dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses", "pytest-xdist"]
 
 [build-system]
 requires = ["hatchling"]
