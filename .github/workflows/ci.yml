@@ -23,7 +23,7 @@ jobs:
     uses: vergil-project/vergil-actions/.github/workflows/ci-audit.yml@v2.1
     with:
       language: python
-      versions: '["3.12", "3.13", "3.14"]'
+      versions: '["3.14"]'
       container-tag: '3.14'
       container-suffix: python
 
@@ -31,7 +31,7 @@ jobs:
     uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.1
     with:
       language: python
-      versions: '["3.12", "3.13", "3.14"]'
+      versions: '["3.14"]'
       container-tag: '3.14'
       container-suffix: python
 
@@ -54,7 +54,7 @@ jobs:
     uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.1
     with:
       language: python
-      versions: '["3.12", "3.13", "3.14"]'
+      versions: '["3.14"]'
       container-tag: '3.14'
       container-suffix: python
 
